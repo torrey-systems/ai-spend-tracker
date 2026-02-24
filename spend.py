@@ -5,14 +5,24 @@ AI Spend Tracker - Fetches spend from multiple AI API providers.
 
 import os
 import json
+import logging
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, Optional
+from functools import wraps
 
 # Import config module for file-based configuration
 from config import load_config, get_api_key, get_provider_config, get_cache_config, get_settings
+from errors import retry_on_exception
 
-# Load config at module level
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Load configuration at module level
 _config = None
 
 def _get_config():
@@ -28,16 +38,49 @@ CACHE_FILE = "/tmp/ai-spend-cache.json"  # Can be overridden via config
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
+def handle_provider_errors(provider_name: str):
+    """Decorator to handle provider errors consistently."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except requests.exceptions.Timeout as e:
+                logger.error(f"{provider_name} API timeout: {e}")
+                return {"provider": provider_name, "error": f"Request timeout: {str(e)}"}
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"{provider_name} API connection error: {e}")
+                return {"provider": provider_name, "error": f"Connection error: {str(e)}"}
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response is not None else None
+                logger.error(f"{provider_name} API HTTP error: {e} (status: {status_code})")
+                return {"provider": provider_name, "error": f"HTTP {status_code}: {str(e)}"}
+            except Exception as e:
+                logger.error(f"{provider_name} API unexpected error: {e}")
+                return {"provider": provider_name, "error": str(e)}
+        return wrapper
+    return decorator
+
+
+@handle_provider_errors("OpenAI")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
 def get_openai_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     """Fetch OpenAI usage from the API."""
     if not api_key:
+        logger.warning("OpenAI API key not provided")
         return None
+    
+    config = _get_config()
+    provider_config = get_provider_config(config, "openai")
     
     headers = {
         "Authorization": f"Bearer {api_key}",
     }
-    if OPENAI_ORG_ID:
-        headers["OpenAI-Organization"] = OPENAI_ORG_ID
+    
+    # Check for org_id in config first, then env var
+    org_id = provider_config.get("org_id") or os.getenv("OPENAI_ORG_ID") or OPENAI_ORG_ID
+    if org_id:
+        headers["OpenAI-Organization"] = org_id
     
     # Get usage for last N days
     end_date = datetime.now()
@@ -45,28 +88,31 @@ def get_openai_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     
     url = f"https://api.openai.com/v1/usage?start_date={start_date.strftime('%Y-%m-%d')}&end_date={end_date.strftime('%Y-%m-%d')}&granularity=daily"
     
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        total_spend = 0
-        for day in data.get("data", []):
-            total_spend += day.get("cost", 0)
-        
-        return {
-            "provider": "OpenAI",
-            "total": round(total_spend, 4),
-            "currency": "USD",
-            "days": days
-        }
-    except Exception as e:
-        return {"provider": "OpenAI", "error": str(e)}
+    logger.info(f"Fetching OpenAI usage for {days} days")
+    response = requests.get(url, headers=headers, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    
+    total_spend = 0
+    for day in data.get("data", []):
+        total_spend += day.get("cost", 0)
+    
+    result = {
+        "provider": "OpenAI",
+        "total": round(total_spend, 4),
+        "currency": "USD",
+        "days": days
+    }
+    logger.info(f"OpenAI spend: {result['total']}")
+    return result
 
 
+@handle_provider_errors("Anthropic")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
 def get_anthropic_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     """Fetch Anthropic usage from the API."""
     if not api_key:
+        logger.warning("Anthropic API key not provided")
         return None
     
     headers = {
@@ -74,32 +120,35 @@ def get_anthropic_spend(api_key: str, days: int = 30) -> Optional[Dict]:
         "anthropic-version": "2023-06-01"
     }
     
-    # Anthropic uses a different endpoint - might need org ID
-    # This is a simplified version
     url = "https://api.anthropic.com/v1/organizations/self/usage"
     
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        # If we get 404, the endpoint might be different
-        if response.status_code == 404:
-            return {"provider": "Anthropic", "error": "API endpoint not found - may need org ID"}
-        
-        # Anthropic billing API is limited - we'll estimate based on credits
-        # For now, return what we can
-        return {
-            "provider": "Anthropic",
-            "total": 0,  # Would need proper billing API access
-            "currency": "USD",
-            "note": "API access limited",
-            "days": days
-        }
-    except Exception as e:
-        return {"provider": "Anthropic", "error": str(e)}
+    logger.info(f"Fetching Anthropic usage for {days} days")
+    response = requests.get(url, headers=headers, timeout=10)
+    
+    if response.status_code == 404:
+        logger.warning("Anthropic API endpoint not found - may need org ID")
+        return {"provider": "Anthropic", "error": "API endpoint not found - may need org ID"}
+    
+    response.raise_for_status()
+    
+    # Anthropic billing API is limited
+    result = {
+        "provider": "Anthropic",
+        "total": 0,
+        "currency": "USD",
+        "note": "API access limited",
+        "days": days
+    }
+    logger.info(f"Anthropic spend: {result['total']}")
+    return result
 
 
+@handle_provider_errors("OpenRouter")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
 def get_openrouter_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     """Fetch OpenRouter usage from the API."""
     if not api_key:
+        logger.warning("OpenRouter API key not provided")
         return None
     
     headers = {
@@ -107,29 +156,27 @@ def get_openrouter_spend(api_key: str, days: int = 30) -> Optional[Dict]:
         "HTTP-Referer": "https://openrouter.ai",
     }
     
-    # OpenRouter provides user-level usage
     url = "https://openrouter.ai/api/v1/credits"
     
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        total_spend = data.get("data", {}).get("total_usage", 0)
-        
-        return {
-            "provider": "OpenRouter",
-            "total": round(total_spend, 4),
-            "currency": "USD",
-            "days": days
-        }
-    except Exception as e:
-        return {"provider": "OpenRouter", "error": str(e)}
+    logger.info(f"Fetching OpenRouter usage for {days} days")
+    response = requests.get(url, headers=headers, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    
+    total_spend = data.get("data", {}).get("total_usage", 0)
+    
+    result = {
+        "provider": "OpenRouter",
+        "total": round(total_spend, 4),
+        "currency": "USD",
+        "days": days
+    }
+    logger.info(f"OpenRouter spend: {result['total']}")
+    return result
 
 
 def get_cursor_spend() -> Optional[Dict]:
-    """Cursor doesn't have a public API. This is a placeholder."""
-    # Would need to scrape or use unofficial methods
+    """Cursor doesn't have a public API."""
     return {
         "provider": "Cursor",
         "total": 0,
@@ -148,21 +195,28 @@ def load_cache(config: Dict = None) -> Optional[Dict]:
     cache_ttl = cache_cfg.get("ttl_seconds", CACHE_TTL_SECONDS)
     
     if not cache_cfg.get("enabled", True):
+        logger.debug("Cache disabled")
         return None
     
     if not os.path.exists(cache_file):
+        logger.debug(f"Cache file {cache_file} does not exist")
         return None
     
     try:
         with open(cache_file, 'r') as f:
             cached = json.load(f)
         
-        # Check if cache is still valid
         cached_time = cached.get("timestamp", 0)
-        if datetime.now().timestamp() - cached_time < cache_ttl:
+        age = datetime.now().timestamp() - cached_time
+        if age < cache_ttl:
+            logger.info(f"Using cached data (age: {age:.0f}s)")
             return cached.get("data")
-    except:
-        pass
+        else:
+            logger.debug(f"Cache expired (age: {age:.0f}s)")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in cache file: {e}")
+    except Exception as e:
+        logger.error(f"Error reading cache: {e}")
     
     return None
 
@@ -176,20 +230,25 @@ def save_cache(data: Dict, config: Dict = None):
     cache_file = cache_cfg.get("file", CACHE_FILE)
     
     if not cache_cfg.get("enabled", True):
+        logger.debug("Cache disabled, not saving")
         return
     
     try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
         with open(cache_file, 'w') as f:
             json.dump({
                 "timestamp": datetime.now().timestamp(),
                 "data": data
             }, f)
-    except:
-        pass
+        logger.info(f"Cached results to {cache_file}")
+    except Exception as e:
+        logger.error(f"Error saving cache: {e}")
 
 
 def get_all_spend(force_refresh: bool = False) -> Dict:
     """Fetch spend from all configured providers."""
+    logger.info("Fetching spend from all providers")
     config = _get_config()
     
     # Check cache first
@@ -237,6 +296,7 @@ def get_all_spend(force_refresh: bool = False) -> Dict:
     # Cache results
     save_cache(results, config)
     
+    logger.info(f"Total spend: {results['_total']}")
     return results
 
 
@@ -274,7 +334,11 @@ def main():
     parser = argparse.ArgumentParser(description="AI Spend Tracker")
     parser.add_argument("--refresh", action="store_true", help="Force refresh cache")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
+    
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
     
     results = get_all_spend(force_refresh=args.refresh)
     
