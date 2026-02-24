@@ -8,6 +8,22 @@
 
 A macOS menu bar application to track your AI API spending across OpenAI, Anthropic, OpenRouter, and Cursor — all in one glance.
 
+## 🚀 Quick Start (For Non-Technical Users)
+
+**Just double-click and you're done!**
+
+1. **Download** this repository and extract it
+2. **Double-click** `Install.command` 
+3. Follow the on-screen instructions
+4. Add your API keys when prompted
+5. The app will appear in your menu bar! 🏆
+
+That's it! The installer will:
+- Check for Python 3
+- Install required dependencies automatically  
+- Set up the configuration file
+- Launch the app for you
+
 ## Features
 
 - 📊 **Real-time tracking** - See your total AI spend at a glance in the menu bar
