@@ -420,13 +420,18 @@ class AISpendTracker(rumps.App):
     
     def _show_setup_message(self):
         """Show setup instructions when no keys are configured."""
-        # Update menu items to show needs setup
-        for i in range(2, 10):
-            if i < len(self.menu):
-                self.menu[i].title = self.menu[i].title.split(":")[0] + ": ⚙️ Needs Setup"
-        
-        if len(self.menu) > 11:
-            self.menu[11].title = "⚠️ Please configure API keys to track spend"
+        # Update menu title to show needs setup
+        self.title = "⚙️ AI Spend"
+        # Show alert for setup
+        self._show_setup_alert()
+    
+    def _show_setup_alert(self):
+        """Show setup alert dialog."""
+        import rumps
+        rumps.alert(title="AI Spend Tracker Setup", 
+                   message="No API keys configured. Click Settings to add your API keys.",
+                   ok="Open Settings",
+                   cancel="Later")
     
     def _build_menu(self):
         """Build the dropdown menu."""
