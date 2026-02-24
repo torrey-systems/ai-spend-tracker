@@ -119,13 +119,8 @@ class SettingsWindow:
     
     def show(self) -> Optional[Dict[str, str]]:
         """Show the settings modal and return new keys if saved."""
-        # Import tkinter here to avoid issues if not available
-        try:
-            import tkinter as tk
-            from tkinter import ttk
-        except ImportError:
-            # Fallback to osascript if tkinter not available
-            return self._show_osascript_dialog()
+        # Use osascript dialog - more reliable on macOS
+        return self._show_osascript_dialog()
         
         # Create the modal window
         root = tk.Tk()
@@ -235,45 +230,57 @@ class SettingsWindow:
         return None
     
     def _show_osascript_dialog(self) -> Optional[Dict[str, str]]:
-        """Fallback to osascript dialog if tkinter not available."""
-        current_key = self.current_keys.get("openai", "")
+        """Show settings dialog using osascript."""
+        current_openai = self.current_keys.get("openai", "")
+        current_anthropic = self.current_keys.get("anthropic", "")
+        current_openrouter = self.current_keys.get("openrouter", "")
         
-        script = f'''display dialog "Enter your OpenAI API Key:
-
-Get your key at: https://platform.openai.com/api-keys
-
-Your key will be stored securely in macOS Keychain.
-
-Leave empty to clear the stored key." default answer "{current_key}" with title "AI Spend Tracker - Settings" with icon note buttons {{"Cancel", "Save"}} default button "Save"'''
+        # Use multiple input fields via osascript
+        script = f'''
+set dialogText to "Enter your API keys:\n\nLeave blank to keep existing value."
+set AppleScript's text item delimiters to "|"
+try
+    set input to display dialog dialogText default answer "{current_openai}|{current_anthropic}|{current_openrouter}" with title "AI Spend Tracker Settings" with icon note buttons {{"Cancel", "Save"}} default button "Save"
+    set buttonReturned to button returned of input
+    if buttonReturned is "Save" then
+        set textReturned to text returned of input
+        set AppleScript's text item delimiters to "|"
+        set keyList to every text item of textReturned
+        set openaiKey to item 1 of keyList
+        set anthropicKey to item 2 of keyList
+        set openrouterKey to item 3 of keyList
+        return openaiKey & "|" & anthropicKey & "|" & openrouterKey
+    end if
+on error
+    return ""
+end try
+'''
         
         result = subprocess.run(["osascript", "-e", script], 
                                capture_output=True, text=True)
         
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout.strip():
             return None
         
-        # Parse the response - osascript returns button name
-        if "Save" not in result.stdout:
-            return None
+        # Parse the response
+        keys = result.stdout.strip().split("|")
         
-        # The default answer is returned, need to extract it
-        # Use a different approach to get the input
-        script2 = f'''set userInput to text returned of (display dialog "Enter your OpenAI API Key:" default answer "{current_key}" hidden answer true with title "API Key" buttons {{"Cancel", "Save"}} default button "Save")'''
+        new_keys = {}
+        if len(keys) >= 1 and keys[0].strip():
+            save_key_to_keyring("openai_api_key", keys[0].strip())
+            new_keys["openai"] = keys[0].strip()
+        else:
+            delete_key_from_keyring("openai_api_key")
+            
+        if len(keys) >= 2 and keys[1].strip():
+            save_key_to_keyring("anthropic_api_key", keys[1].strip())
+            new_keys["anthropic"] = keys[1].strip()
+            
+        if len(keys) >= 3 and keys[2].strip():
+            save_key_to_keyring("openrouter_api_key", keys[2].strip())
+            new_keys["openrouter"] = keys[2].strip()
         
-        result2 = subprocess.run(["osascript", "-e", script2], 
-                               capture_output=True, text=True)
-        
-        if result2.returncode == 0:
-            key = result2.stdout.strip()
-            if key:
-                save_key_to_keyring("openai_api_key", key)
-                return {"openai": key}
-            else:
-                # Empty input - clear
-                delete_key_from_keyring("openai_api_key")
-                return {}
-        
-        return None
+        return new_keys if new_keys else None
 
 
 class AISpendTracker(rumps.App):
@@ -322,11 +329,18 @@ class AISpendTracker(rumps.App):
             None,
         ]
         
-        # Only show OpenAI if configured
-        if keys.get("openai"):
-            menu_items.append(rumps.MenuItem("OpenAI: --", callback=None))
-        else:
-            menu_items.append(rumps.MenuItem("OpenAI: Not configured", callback=None))
+        # Show all providers with their status
+        provider_display = {
+            "openai": "OpenAI",
+            "anthropic": "Anthropic", 
+            "openrouter": "OpenRouter",
+        }
+        
+        for key, name in provider_display.items():
+            if keys.get(key):
+                menu_items.append(rumps.MenuItem(f"{name}: --", callback=None))
+            else:
+                menu_items.append(rumps.MenuItem(f"{name}: Not configured", callback=None))
         
         menu_items.extend([
             None,
