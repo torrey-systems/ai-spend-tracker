@@ -21,7 +21,7 @@ Thumbs.db
 
 # Local config
 .env
-config.py
+# config.py is now the official config module
 
 # Cache
 /tmp/ai-spend-cache.json

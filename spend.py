@@ -9,9 +9,22 @@ import requests
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 
+# Import config module for file-based configuration
+from config import load_config, get_api_key, get_provider_config, get_cache_config, get_settings
+
+# Load config at module level
+_config = None
+
+def _get_config():
+    """Get or load configuration."""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
 # Configuration
 OPENAI_ORG_ID = os.getenv("OPENAI_ORG_ID")
-CACHE_FILE = "/tmp/ai-spend-cache.json"
+CACHE_FILE = "/tmp/ai-spend-cache.json"  # Can be overridden via config
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -125,18 +138,28 @@ def get_cursor_spend() -> Optional[Dict]:
     }
 
 
-def load_cache() -> Optional[Dict]:
+def load_cache(config: Dict = None) -> Optional[Dict]:
     """Load cached results if still valid."""
-    if not os.path.exists(CACHE_FILE):
+    if config is None:
+        config = _get_config()
+    
+    cache_cfg = get_cache_config(config)
+    cache_file = cache_cfg.get("file", CACHE_FILE)
+    cache_ttl = cache_cfg.get("ttl_seconds", CACHE_TTL_SECONDS)
+    
+    if not cache_cfg.get("enabled", True):
+        return None
+    
+    if not os.path.exists(cache_file):
         return None
     
     try:
-        with open(CACHE_FILE, 'r') as f:
+        with open(cache_file, 'r') as f:
             cached = json.load(f)
         
         # Check if cache is still valid
         cached_time = cached.get("timestamp", 0)
-        if datetime.now().timestamp() - cached_time < CACHE_TTL_SECONDS:
+        if datetime.now().timestamp() - cached_time < cache_ttl:
             return cached.get("data")
     except:
         pass
@@ -144,10 +167,19 @@ def load_cache() -> Optional[Dict]:
     return None
 
 
-def save_cache(data: Dict):
+def save_cache(data: Dict, config: Dict = None):
     """Save results to cache."""
+    if config is None:
+        config = _get_config()
+    
+    cache_cfg = get_cache_config(config)
+    cache_file = cache_cfg.get("file", CACHE_FILE)
+    
+    if not cache_cfg.get("enabled", True):
+        return
+    
     try:
-        with open(CACHE_FILE, 'w') as f:
+        with open(cache_file, 'w') as f:
             json.dump({
                 "timestamp": datetime.now().timestamp(),
                 "data": data
@@ -158,29 +190,36 @@ def save_cache(data: Dict):
 
 def get_all_spend(force_refresh: bool = False) -> Dict:
     """Fetch spend from all configured providers."""
+    config = _get_config()
+    
     # Check cache first
     if not force_refresh:
         cached = load_cache()
         if cached:
             return cached
     
+    # Get API keys from config or environment (env vars take precedence)
     api_keys = {
-        "openai": os.getenv("OPENAI_API_KEY"),
-        "anthropic": os.getenv("ANTHROPIC_API_KEY"),
-        "openrouter": os.getenv("OPENROUTER_API_KEY"),
+        "openai": get_api_key(config, "openai", "OPENAI_API_KEY"),
+        "anthropic": get_api_key(config, "anthropic", "ANTHROPIC_API_KEY"),
+        "openrouter": get_api_key(config, "openrouter", "OPENROUTER_API_KEY"),
     }
+    
+    # Get settings
+    settings = get_settings(config)
+    days = settings.get("default_days", 30)
     
     results = {}
     
     # Fetch from each provider
     if api_keys.get("openai"):
-        results["openai"] = get_openai_spend(api_keys["openai"])
+        results["openai"] = get_openai_spend(api_keys["openai"], days)
     
     if api_keys.get("anthropic"):
-        results["anthropic"] = get_anthropic_spend(api_keys["anthropic"])
+        results["anthropic"] = get_anthropic_spend(api_keys["anthropic"], days)
     
     if api_keys.get("openrouter"):
-        results["openrouter"] = get_openrouter_spend(api_keys["openrouter"])
+        results["openrouter"] = get_openrouter_spend(api_keys["openrouter"], days)
     
     # Cursor (placeholder)
     results["cursor"] = get_cursor_spend()
@@ -196,7 +235,7 @@ def get_all_spend(force_refresh: bool = False) -> Dict:
     results["_date"] = datetime.now().strftime("%Y-%m-%d")
     
     # Cache results
-    save_cache(results)
+    save_cache(results, config)
     
     return results
 
