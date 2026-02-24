@@ -1,0 +1,31 @@
+{
+  "providers": {
+    "openai": {
+      "api_key": "sk-your-openai-key-here",
+      "org_id": "org-your-org-id"
+    },
+    "anthropic": {
+      "api_key": "sk-ant-your-anthropic-key-here"
+    },
+    "openrouter": {
+      "api_key": "your-openrouter-key"
+    },
+    "azure_openai": {
+      "api_key": "your-azure-key",
+      "endpoint": "https://your-resource.openai.azure.com/",
+      "subscription_id": "your-subscription-id"
+    },
+    "gemini": {
+      "api_key": "your-gemini-key"
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "file": "/tmp/ai-spend-cache.json",
+    "ttl_seconds": 300
+  },
+  "settings": {
+    "default_days": 30,
+    "currency": "USD"
+  }
+}
