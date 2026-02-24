@@ -175,6 +175,153 @@ def get_openrouter_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     return result
 
 
+
+
+@handle_provider_errors("Perplexity")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
+def get_perplexity_spend(api_key: str, days: int = 30) -> Optional[Dict]:
+    """Fetch Perplexity usage from the API."""
+    if not api_key:
+        logger.warning("Perplexity API key not provided")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+    
+    # Perplexity doesn't have a public usage API, check if available
+    # This is a placeholder as Perplexity billing is through credits
+    logger.info("Fetching Perplexity usage (API limited)")
+    return {
+        "provider": "Perplexity",
+        "total": 0,
+        "currency": "USD",
+        "note": "No public usage API - billed via credits",
+        "days": days
+    }
+
+
+@handle_provider_errors("Mistral")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
+def get_mistral_spend(api_key: str, days: int = 30) -> Optional[Dict]:
+    """Fetch Mistral usage from the API."""
+    if not api_key:
+        logger.warning("Mistral API key not provided")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+    
+    # Mistral platform usage API
+    url = "https://api.mistral.ai/v1/usage"
+    
+    logger.info("Fetching Mistral usage")
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        total_spend = data.get("total_cost", 0)
+        
+        result = {
+            "provider": "Mistral",
+            "total": round(total_spend, 4),
+            "currency": "USD",
+            "days": days
+        }
+        logger.info(f"Mistral spend: {result['total']}")
+        return result
+    except requests.exceptions.HTTPError as e:
+        if e.response and e.response.status_code == 404:
+            logger.warning("Mistral usage API not available")
+            return {"provider": "Mistral", "error": "Usage API not available"}
+        raise
+
+
+@handle_provider_errors("Cohere")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
+def get_cohere_spend(api_key: str, days: int = 30) -> Optional[Dict]:
+    """Fetch Cohere usage from the API."""
+    if not api_key:
+        logger.warning("Cohere API key not provided")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+    
+    # Cohere platform usage
+    url = "https://api.cohere.ai/v1/billing/history"
+    
+    logger.info("Fetching Cohere usage")
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Calculate total from billing history
+        total_spend = 0
+        for item in data.get("billing_history", []):
+            total_spend += item.get("amount", 0)
+        
+        result = {
+            "provider": "Cohere",
+            "total": round(total_spend, 4),
+            "currency": "USD",
+            "days": days
+        }
+        logger.info(f"Cohere spend: {result['total']}")
+        return result
+    except requests.exceptions.HTTPError as e:
+        if e.response and e.response.status_code == 404:
+            logger.warning("Cohere billing API not available")
+            return {"provider": "Cohere", "error": "Billing API not available"}
+        raise
+
+
+@handle_provider_errors("xAI")
+@retry_on_exception(max_retries=3, delay=1.0, backoff=2.0, exceptions=(requests.exceptions.RequestException,))
+def get_xai_spend(api_key: str, days: int = 30) -> Optional[Dict]:
+    """Fetch xAI (Grok) usage from the API."""
+    if not api_key:
+        logger.warning("xAI API key not provided")
+        return None
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+    
+    # xAI usage endpoint
+    url = "https://api.x.ai/v1/usage"
+    
+    logger.info("Fetching xAI usage")
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        total_spend = data.get("total_usage", 0)
+        
+        result = {
+            "provider": "xAI",
+            "total": round(total_spend, 4),
+            "currency": "USD",
+            "days": days
+        }
+        logger.info(f"xAI spend: {result['total']}")
+        return result
+    except requests.exceptions.HTTPError as e:
+        if e.response and e.response.status_code == 404:
+            logger.warning("xAI usage API not available")
+            return {"provider": "xAI", "error": "Usage API not available"}
+        raise
+
+
 def get_cursor_spend() -> Optional[Dict]:
     """Cursor doesn't have a public API."""
     return {
@@ -262,6 +409,10 @@ def get_all_spend(force_refresh: bool = False) -> Dict:
         "openai": get_api_key(config, "openai", "OPENAI_API_KEY"),
         "anthropic": get_api_key(config, "anthropic", "ANTHROPIC_API_KEY"),
         "openrouter": get_api_key(config, "openrouter", "OPENROUTER_API_KEY"),
+        "perplexity": get_api_key(config, "perplexity", "PERPLEXITY_API_KEY"),
+        "mistral": get_api_key(config, "mistral", "MISTRAL_API_KEY"),
+        "cohere": get_api_key(config, "cohere", "COHERE_API_KEY"),
+        "xai": get_api_key(config, "xai", "XAI_API_KEY"),
     }
     
     # Get settings
@@ -279,6 +430,18 @@ def get_all_spend(force_refresh: bool = False) -> Dict:
     
     if api_keys.get("openrouter"):
         results["openrouter"] = get_openrouter_spend(api_keys["openrouter"], days)
+    
+    if api_keys.get("perplexity"):
+        results["perplexity"] = get_perplexity_spend(api_keys["perplexity"], days)
+    
+    if api_keys.get("mistral"):
+        results["mistral"] = get_mistral_spend(api_keys["mistral"], days)
+    
+    if api_keys.get("cohere"):
+        results["cohere"] = get_cohere_spend(api_keys["cohere"], days)
+    
+    if api_keys.get("xai"):
+        results["xai"] = get_xai_spend(api_keys["xai"], days)
     
     # Cursor (placeholder)
     results["cursor"] = get_cursor_spend()
@@ -312,6 +475,10 @@ def format_spend(results: Dict) -> str:
         "openai": "OpenAI",
         "anthropic": "Anthropic", 
         "openrouter": "OpenRouter",
+        "perplexity": "Perplexity",
+        "mistral": "Mistral",
+        "cohere": "Cohere",
+        "xai": "xAI",
         "cursor": "Cursor"
     }
     

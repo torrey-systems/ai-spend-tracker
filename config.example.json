@@ -10,6 +10,18 @@
     "openrouter": {
       "api_key": "your-openrouter-key"
     },
+    "perplexity": {
+      "api_key": "your-perplexity-key"
+    },
+    "mistral": {
+      "api_key": "your-mistral-key"
+    },
+    "cohere": {
+      "api_key": "your-cohere-key"
+    },
+    "xai": {
+      "api_key": "your-xai-key"
+    },
     "azure_openai": {
       "api_key": "your-azure-key",
       "endpoint": "https://your-resource.openai.azure.com/",
