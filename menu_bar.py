@@ -22,7 +22,7 @@ from spend import get_all_spend
 
 # App metadata
 APP_NAME = "AI Spend Tracker"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 APP_ICON = None
 
 # Config file path
@@ -55,17 +55,20 @@ def get_key_from_keyring(key_name: str) -> Optional[str]:
     try:
         import keyring
         return keyring.get_password(KEYRING_SERVICE, key_name)
-    except Exception:
+    except Exception as e:
+        print(f"Error getting key from keyring: {e}")
         return None
 
 
-def save_key_to_keyring(key_name: str, value: str) -> None:
-    """Save a key to macOS Keychain."""
+def save_key_to_keyring(key_name: str, value: str) -> bool:
+    """Save a key to macOS Keychain. Returns True on success."""
     try:
         import keyring
         keyring.set_password(KEYRING_SERVICE, key_name, value)
+        return True
     except Exception as e:
         print(f"Warning: Could not save to Keychain: {e}")
+        return False
 
 
 def delete_key_from_keyring(key_name: str) -> None:
@@ -78,52 +81,19 @@ def delete_key_from_keyring(key_name: str) -> None:
 
 
 def get_all_api_keys() -> Dict[str, str]:
-    """Get all API keys from config file and Keychain."""
+    """Get all API keys from keychain only (simplified)."""
     keys = {}
-    config = load_json_config(CONFIG_PATH)
-    providers = config.get("providers", {})
     
-    # Map provider names to keyring key names
-    keyring_keys = {
-        "openai": "openai_api_key",
-        "anthropic": "anthropic_api_key", 
-        "openrouter": "openrouter_api_key",
-        "perplexity": "perplexity_api_key",
-        "mistral": "mistral_api_key",
-        "cohere": "cohere_api_key",
-        "xai": "xai_api_key",
-        "azure_openai": "azure_openai_api_key",
-        "gemini": "gemini_api_key",
-    }
+    # Only check OpenAI keychain for now (simplified)
+    keyring_name = "openai_api_key"
+    keychain_value = get_key_from_keyring(keyring_name)
+    if keychain_value:
+        keys["openai"] = keychain_value
     
-    for provider, keyring_name in keyring_keys.items():
-        # First check Keychain
-        keychain_value = get_key_from_keyring(keyring_name)
-        if keychain_value:
-            keys[provider] = keychain_value
-        # Then check config file (legacy support)
-        elif providers.get(provider, {}).get("api_key"):
-            api_key = providers[provider]["api_key"]
-            # Don't use placeholder values
-            if api_key and "your-" not in api_key and api_key != "sk-your-openai-key-here":
-                keys[provider] = api_key
-    
-    # Also check environment variables
-    env_mappings = {
-        "OPENAI_API_KEY": "openai",
-        "ANTHROPIC_API_KEY": "anthropic",
-        "OPENROUTER_API_KEY": "openrouter",
-        "PERPLEXITY_API_KEY": "perplexity",
-        "MISTRAL_API_KEY": "mistral",
-        "COHERE_API_KEY": "cohere",
-        "XAI_API_KEY": "xai",
-        "AZURE_OPENAI_API_KEY": "azure_openai",
-        "GEMINI_API_KEY": "gemini",
-    }
-    for env_var, provider in env_mappings.items():
-        env_value = os.getenv(env_var)
-        if env_value:
-            keys[provider] = env_value
+    # Also check environment variables as fallback
+    env_value = os.getenv("OPENAI_API_KEY")
+    if env_value and not keys.get("openai"):
+        keys["openai"] = env_value
     
     return keys
 
@@ -135,266 +105,194 @@ def check_api_keys_configured() -> bool:
 
 def set_env_from_keys(keys: Dict[str, str]) -> None:
     """Set environment variables from keys for spend.py to use."""
-    env_mappings = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "perplexity": "PERPLEXITY_API_KEY",
-        "mistral": "MISTRAL_API_KEY",
-        "cohere": "COHERE_API_KEY",
-        "xai": "XAI_API_KEY",
-        "gemini": "GEMINI_API_KEY",
-    }
-    for provider, env_var in env_mappings.items():
-        if keys.get(provider):
-            os.environ[env_var] = keys[provider]
+    if keys.get("openai"):
+        os.environ["OPENAI_API_KEY"] = keys["openai"]
 
 
 class SettingsWindow:
-    """Modal settings window using rumps.Window."""
+    """Modal settings window using tkinter for proper input fields."""
     
     def __init__(self, current_keys: Dict[str, str]):
         self.current_keys = current_keys
         self.saved = False
-        
+        self.new_keys = {}
+    
     def show(self) -> Optional[Dict[str, str]]:
         """Show the settings modal and return new keys if saved."""
+        # Import tkinter here to avoid issues if not available
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            # Fallback to osascript if tkinter not available
+            return self._show_osascript_dialog()
         
-        # Build the message with current values
-        openai_val = self.current_keys.get("openai", "")
-        anthropic_val = self.current_keys.get("anthropic", "")
-        openrouter_val = self.current_keys.get("openrouter", "")
-        perplexity_val = self.current_keys.get("perplexity", "")
-        gemini_val = self.current_keys.get("gemini", "")
+        # Create the modal window
+        root = tk.Tk()
+        root.title("AI Spend Tracker - Settings")
+        root.geometry("500x250")
+        root.resizable(False, False)
         
-        # Show the settings window with input fields
-        # Note: rumps.Window has limited input support, so we use a multi-line approach
-        # but we'll construct a clean input string
+        # Center the window
+        root.update_idletasks()
+        x = (root.winfo_screenwidth() // 2) - (250)
+        y = (root.winfo_screenheight() // 2) - (125)
+        root.geometry(f"500x250+{x}+{y}")
         
-        message = """🔑 Enter your API keys below. Leave blank to keep existing value.
-
-Supported Providers:
-• OpenAI (platform.openai.com)
-• Anthropic (console.anthropic.com)  
-• OpenRouter (openrouter.ai)
-• Perplexity (perplexity.ai)
-• Google Gemini (aistudio.google.com)
-
-Your keys are stored securely in macOS Keychain.
-"""
+        # Make it modal
+        root.transient()
+        root.grab_set()
         
-        # Use a single window with all fields concatenated
-        input_fields = (
-            f"OpenAI API Key: [{openai_val}]\n"
-            f"Anthropic API Key: [{anthropic_val}]\n"
-            f"OpenRouter API Key: [{openrouter_val}]\n"
-            f"Perplexity API Key: [{perplexity_val}]\n"
-            f"Google Gemini API Key: [{gemini_val}]"
-        )
+        # Result variable
+        result = {"saved": False, "openai_key": ""}
         
-        # Since rumps.Window is limited, let's use osascript for a proper modal
-        # This gives us native macOS look and better input handling
+        # Create main frame
+        main_frame = ttk.Frame(root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
         
-        script = '''
-        set theText to text returned of (display dialog "🔑 API Keys Configuration
-
-Enter your API keys. Leave a field empty to keep its current value.
-
-Providers supported:
-• OpenAI • Anthropic • OpenRouter • Perplexity • Gemini
-
-Your keys will be stored securely in macOS Keychain." & return & return default answer "" with title "AI Spend Tracker - Settings" hidden answer false buttons {"Cancel", "Save"} default button "Save")
-        '''
+        # Title
+        title_label = ttk.Label(main_frame, text="🔑 OpenAI API Key", 
+                               font=("Helvetica", 14, "bold"))
+        title_label.pack(pady=(0, 10))
         
-        # Actually, osascript doesn't support multi-field input well
-        # Let's use a different approach - create a simple app with dialogs
-        # For now, we'll use the environment variables approach
+        # Description
+        desc_label = ttk.Label(main_frame, 
+            text="Enter your OpenAI API key to track spending.\n"
+                 "Get your key at: https://platform.openai.com/api-keys\n"
+                 "Your key is stored securely in macOS Keychain.",
+            justify=tk.CENTER)
+        desc_label.pack(pady=(0, 15))
         
-        # Use the simple approach: ask for keys one by one
-        return self._show_step_by_step()
+        # Input frame
+        input_frame = ttk.Frame(main_frame)
+        input_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(input_frame, text="OpenAI API Key:").pack(anchor=tk.W)
+        
+        # Entry field for API key
+        api_key_var = tk.StringVar(value=self.current_keys.get("openai", ""))
+        api_key_entry = ttk.Entry(input_frame, textvariable=api_key_var, 
+                                   width=50, show="*")
+        api_key_entry.pack(fill=tk.X, pady=(5, 0))
+        api_key_entry.focus()
+        
+        # Show/hide toggle
+        def toggle_show():
+            if show_var.get():
+                api_key_entry.config(show="")
+            else:
+                api_key_entry.config(show="*")
+        
+        show_var = tk.BooleanVar(value=False)
+        show_check = ttk.Checkbutton(input_frame, text="Show key", 
+                                      variable=show_var, command=toggle_show)
+        show_check.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Button frame
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(20, 0))
+        
+        def on_save():
+            key = api_key_var.get().strip()
+            if key:
+                # Save to keychain
+                if save_key_to_keyring("openai_api_key", key):
+                    result["saved"] = True
+                    result["openai_key"] = key
+                    root.destroy()
+                else:
+                    tk.messagebox.showerror("Error", "Failed to save to Keychain")
+            else:
+                # User entered empty - clear the key
+                delete_key_from_keyring("openai_api_key")
+                result["saved"] = True
+                result["openai_key"] = ""
+                root.destroy()
+        
+        def on_cancel():
+            root.destroy()
+        
+        # Buttons
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Save", command=on_save, 
+                   default=tk.ACTIVE).pack(side=tk.RIGHT, padx=5)
+        
+        # Handle enter key
+        def handle_return(event):
+            on_save()
+            return "break"
+        
+        api_key_entry.bind("<Return>", handle_return)
+        
+        # Run the modal
+        root.mainloop()
+        
+        if result["saved"]:
+            if result["openai_key"]:
+                return {"openai": result["openai_key"]}
+            else:
+                return {}  # Empty means cleared
+        return None
     
-    def _show_step_by_step(self) -> Optional[Dict[str, str]]:
-        """Show settings using sequential dialogs (more reliable)."""
+    def _show_osascript_dialog(self) -> Optional[Dict[str, str]]:
+        """Fallback to osascript dialog if tkinter not available."""
+        current_key = self.current_keys.get("openai", "")
         
-        # First, check if user wants to configure or cancel
-        response = subprocess.run([
-            "osascript", "-e",
-            '''display dialog "⚙️ AI Spend Tracker Settings
+        script = f'''display dialog "Enter your OpenAI API Key:
 
-Would you like to:
-• Add or update API keys
-• Clear all stored keys
-• Cancel" with title "Settings" buttons {"Add Keys", "Clear Keys", "Cancel"} default button "Add Keys"'''
-        ], capture_output=True, text=True)
+Get your key at: https://platform.openai.com/api-keys
+
+Your key will be stored securely in macOS Keychain.
+
+Leave empty to clear the stored key." default answer "{current_key}" with title "AI Spend Tracker - Settings" with icon note buttons {{"Cancel", "Save"}} default button "Save"'''
         
-        button = response.stdout.strip()
+        result = subprocess.run(["osascript", "-e", script], 
+                               capture_output=True, text=True)
         
-        if "Cancel" in button or not button:
+        if result.returncode != 0:
             return None
         
-        if "Clear" in button:
-            # Confirm clearing
-            confirm = subprocess.run([
-                "osascript", "-e",
-                '''display dialog "Are you sure you want to clear all stored API keys?" with title "Confirm Clear" buttons {"Cancel", "Clear All"} default button "Cancel"'''
-            ], capture_output=True, text=True)
-            
-            if "Clear All" in confirm.stdout:
-                # Clear from keyring
-                for key_name in ["openai_api_key", "anthropic_api_key", "openrouter_api_key",
-                                "perplexity_api_key", "mistral_api_key", "cohere_api_key",
-                                "xai_api_key", "azure_openai_api_key", "gemini_api_key"]:
-                    delete_key_from_keyring(key_name)
-                
-                # Clear from config file if exists
-                if os.path.exists(CONFIG_PATH):
-                    save_json_config(CONFIG_PATH, {"providers": {}})
-                
-                subprocess.run([
-                    "osascript", "-e",
-                    'display notification "All API keys have been cleared" with title "AI Spend Tracker"'
-                ], capture_output=True)
-            
+        # Parse the response - osascript returns button name
+        if "Save" not in result.stdout:
             return None
         
-        # User wants to add keys - show help text and then ask
-        new_keys = {}
+        # The default answer is returned, need to extract it
+        # Use a different approach to get the input
+        script2 = f'''set userInput to text returned of (display dialog "Enter your OpenAI API Key:" default answer "{current_key}" hidden answer true with title "API Key" buttons {{"Cancel", "Save"}} default button "Save")'''
         
-        # Define the providers to query (matching spend.py supported providers)
-        providers = [
-            ("openai", "OpenAI API Key", "https://platform.openai.com/api-keys"),
-            ("anthropic", "Anthropic API Key", "https://console.anthropic.com/settings/keys"),
-            ("openrouter", "OpenRouter API Key", "https://openrouter.ai/settings"),
-            ("perplexity", "Perplexity API Key", "https://perplexity.ai/settings"),
-            ("mistral", "Mistral API Key", "https://console.mistral.ai/"),
-            ("cohere", "Cohere API Key", "https://dashboard.cohere.ai/api-keys"),
-            ("xai", "xAI API Key", "https://console.x.ai/"),
-        ]
+        result2 = subprocess.run(["osascript", "-e", script2], 
+                               capture_output=True, text=True)
         
-        for provider_id, provider_name, provider_url in providers:
-            # Show input dialog for each key
-            current = self.current_keys.get(provider_id, "")
-            placeholder = "sk-..." if provider_id != "openrouter" else "..."
-            
-            # Use a dialog to ask for the key
-            script = f'''display dialog "Enter your {provider_name}
-
-Get your key at: {provider_url}
-
-Leave empty to skip this provider." default answer "{current}" with title "API Key - {provider_name}" hidden answer false buttons {"Skip", "Save"} default button "Save"'''
-            
-            result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-            
-            if result.returncode == 0 and "Save" in result.stdout:
-                # Extract the entered key
-                # osascript returns button clicked, we need to parse better
-                # Let's use a different approach
-                pass
+        if result2.returncode == 0:
+            key = result2.stdout.strip()
+            if key:
+                save_key_to_keyring("openai_api_key", key)
+                return {"openai": key}
+            else:
+                # Empty input - clear
+                delete_key_from_keyring("openai_api_key")
+                return {}
         
-        # Better approach: use a single dialog with all fields
-        return self._show_unified_dialog(providers)
-    
-    def _show_unified_dialog(self, providers) -> Optional[Dict[str, str]]:
-        """Show a unified settings dialog."""
-        
-        # Build the AppleScript with all fields
-        # We'll create a nice help message first
-        help_msg = """API Keys Setup
-
-Enter your API keys below. Keys are stored securely in macOS Keychain.
-
-Providers:
-• OpenAI - platform.openai.com
-• Anthropic - console.anthropic.com
-• OpenRouter - openrouter.ai  
-• Perplexity - perplexity.ai
-• Mistral - console.mistral.ai
-• Cohere - dashboard.cohere.ai
-• xAI - console.x.ai
-
-Click 'Save' when done, or 'Cancel' to exit."""
-        
-        # Since we can't do multi-field input easily, let's use a shell script approach
-        # that creates a temporary Python tkinter window - but tkinter isn't available
-        
-        # Alternative: Use the simpler approach - just show the config file location
-        # and ask user to edit it, but that's what we're trying to avoid
-        
-        # Let's create a proper solution using the macOS system prompt
-        # Actually, the best UX is to open a configuration file with all fields pre-filled
-        
-        # Create a temp config with current values for editing
-        temp_config = {
-            "providers": {
-                "openai": {"api_key": self.current_keys.get("openai", "")},
-                "anthropic": {"api_key": self.current_keys.get("anthropic", "")},
-                "openrouter": {"api_key": self.current_keys.get("openrouter", "")},
-                "perplexity": {"api_key": self.current_keys.get("perplexity", "")},
-                "mistral": {"api_key": self.current_keys.get("mistral", "")},
-                "cohere": {"api_key": self.current_keys.get("cohere", "")},
-                "xai": {"api_key": self.current_keys.get("xai", "")},
-            }
-        }
-        
-        temp_path = "/tmp/ai-spend-tracker-temp-config.json"
-        save_json_config(temp_path, temp_config)
-        
-        # Show the user the help and offer to open config file
-        subprocess.run([
-            "osascript", "-e",
-            f'''display dialog "{help_msg}" with title "AI Spend Tracker - Setup" buttons {{"Open Config File", "Cancel"}} default button "Open Config File"'''
-        ], capture_output=True)
-        
-        # Open the config file in the default editor
-        subprocess.run(["open", "-e", temp_path])
-        
-        # Wait and ask user to copy keys to keychain
-        subprocess.run([
-            "osascript", "-e",
-            '''display dialog "1. Edit the config file that opened
-2. Copy your API keys
-3. Click OK when done to save to Keychain
-
-Or click 'Save to Keychain' to continue." with title "Instructions" buttons {"Save to Keychain", "Cancel"} default button "Save to Keychain"'''
-        ], capture_output=True)
-        
-        # Now load the temp config and save to keychain
-        temp_config = load_json_config(temp_path)
-        
-        new_keys = {}
-        for provider, data in temp_config.get("providers", {}).items():
-            api_key = data.get("api_key", "")
-            if api_key and "your-" not in api_key:
-                keyring_name = f"{provider}_api_key"
-                save_key_to_keyring(keyring_name, api_key)
-                new_keys[provider] = api_key
-        
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        
-        if new_keys:
-            subprocess.run([
-                "osascript", "-e",
-                f'display notification "Saved {len(new_keys)} API key(s) to Keychain" with title "AI Spend Tracker"'
-            ], capture_output=True)
-        
-        return new_keys if new_keys else None
+        return None
 
 
 class AISpendTracker(rumps.App):
     """Main menu bar application for AI Spend Tracker."""
     
     def __init__(self):
+        # Load existing keys first
         self.keys_configured = check_api_keys_configured()
         
-        # Set environment variables from existing keys so spend.py can use them
+        # Set environment variables from existing keys
         if self.keys_configured:
             existing_keys = get_all_api_keys()
             set_env_from_keys(existing_keys)
         
-        # Show friendly message if no keys configured
-        title = "⚙️ Setup Required" if not self.keys_configured else "AI: $0.00"
+        # Show status based on configuration
+        if self.keys_configured:
+            title = "AI: $0.00"
+        else:
+            title = "⚙️ Setup"
         
         super(AISpendTracker, self).__init__(
             title,
@@ -408,59 +306,37 @@ class AISpendTracker(rumps.App):
         # Build the menu
         self._build_menu()
         
-        # Set up keyboard shortcut for quit
-        self.setup_quit_shortcut()
-        
         # Initial data fetch
         if self.keys_configured:
             self.update_spend()
             self.start_auto_refresh()
-        else:
-            self._show_setup_message()
-    
-    def _show_setup_message(self):
-        """Show setup instructions when no keys are configured."""
-        # Update menu title to show needs setup
-        self.title = "⚙️ AI Spend"
-        # Show alert for setup
-        self._show_setup_alert()
-    
-    def _show_setup_alert(self):
-        """Show setup alert dialog."""
-        import rumps
-        rumps.alert(title="AI Spend Tracker Setup", 
-                   message="No API keys configured. Click Settings to add your API keys.",
-                   ok="Open Settings",
-                   cancel="Later")
     
     def _build_menu(self):
         """Build the dropdown menu."""
+        # Get current keys to determine what to show
+        keys = get_all_api_keys()
+        
         self.menu = [
             rumps.MenuItem("Refresh Now", callback=self.refresh),
             None,
-            rumps.MenuItem("OpenAI: --", callback=None),
-            rumps.MenuItem("Anthropic: --", callback=None),
-            rumps.MenuItem("OpenRouter: --", callback=None),
-            rumps.MenuItem("Perplexity: --", callback=None),
-            rumps.MenuItem("Mistral: --", callback=None),
-            rumps.MenuItem("Cohere: --", callback=None),
-            rumps.MenuItem("xAI: --", callback=None),
-            rumps.MenuItem("Cursor: --", callback=None),
+        ]
+        
+        # Only show OpenAI if configured
+        if keys.get("openai"):
+            self.menu.append(rumps.MenuItem("OpenAI: --", callback=None))
+        else:
+            self.menu.append(rumps.MenuItem("OpenAI: Not configured", callback=None))
+        
+        self.menu.extend([
             None,
             rumps.MenuItem("Last updated: --", callback=None),
-            None,
-            rumps.MenuItem("Setup Instructions", callback=self.show_setup_instructions),
             None,
             rumps.MenuItem("⚙️ Settings...", callback=self.open_settings),
             None,
             rumps.MenuItem("About", callback=self.show_about),
             None,
             rumps.MenuItem("Quit", callback=lambda _: self.terminate())
-        ]
-    
-    def setup_quit_shortcut(self):
-        """Set up keyboard shortcut for quitting."""
-        pass
+        ])
     
     def update_spend(self):
         """Fetch and display current spend from all providers."""
@@ -468,105 +344,49 @@ class AISpendTracker(rumps.App):
             results = get_all_spend()
             
             total = results.get("_total", 0)
-            self.title = f"AI: ${total:.2f}"
             
-            # Update individual provider items
-            menu_items = self.menu
-            menu_items[2].title = self._format_provider("OpenAI", results.get("openai", {}))
-            menu_items[3].title = self._format_provider("Anthropic", results.get("anthropic", {}))
-            menu_items[4].title = self._format_provider("OpenRouter", results.get("openrouter", {}))
-            menu_items[5].title = self._format_provider("Perplexity", results.get("perplexity", {}))
-            menu_items[6].title = self._format_provider("Mistral", results.get("mistral", {}))
-            menu_items[7].title = self._format_provider("Cohere", results.get("cohere", {}))
-            menu_items[8].title = self._format_provider("xAI", results.get("xai", {}))
-            menu_items[9].title = self._format_provider("Cursor", results.get("cursor", {}))
+            # Only show spend if we have data
+            if total and total > 0:
+                self.title = f"AI: ${total:.2f}"
+            else:
+                self.title = "AI: $0.00"
+            
+            # Update menu items
+            for item in self.menu:
+                if hasattr(item, 'title') and item.title and item.title.startswith("OpenAI:"):
+                    if "error" in results.get("openai", {}):
+                        error_msg = results["openai"].get("error", "")
+                        if "401" in error_msg or "unauthorized" in error_msg.lower():
+                            item.title = "OpenAI: 🔑 Invalid key"
+                        else:
+                            item.title = "OpenAI: ⚠️ Error"
+                    else:
+                        openai_total = results.get("openai", {}).get("total", 0)
+                        item.title = f"OpenAI: ${openai_total:.2f}"
+                    break
             
             # Update timestamp
-            now = datetime.now().strftime("%H:%M:%S")
-            menu_items[11].title = f"Last updated: {now}"
-            
-            # Reset the title if it was showing "Setup Required"
-            if not self.keys_configured:
-                self.keys_configured = True
-                self.title = f"AI: ${total:.2f}"
-                
+            for item in self.menu:
+                if hasattr(item, 'title') and item.title and item.title.startswith("Last updated:"):
+                    now = datetime.now().strftime("%H:%M:%S")
+                    item.title = f"Last updated: {now}"
+                    break
+                    
         except Exception as e:
             error_str = str(e).lower()
             if "connection" in error_str or "timeout" in error_str:
-                friendly_message = "Network issue - will retry automatically"
+                self.title = "AI: ⚠️"
             elif "unauthorized" in error_str or "401" in error_str or "api key" in error_str:
-                friendly_message = "Check your API keys in Settings"
-            elif "json" in error_str:
-                friendly_message = "Config file issue - check Settings"
+                self.title = "AI: 🔑"
             else:
-                friendly_message = "Something went wrong - will retry"
+                self.title = "AI: ⚠️"
             
-            self.title = "AI: ⚠️"
-            self._show_error_notification(friendly_message)
             print(f"Error updating spend: {e}")
-    
-    def _format_provider(self, name: str, data: dict) -> str:
-        """Format a provider's spend for display."""
-        if "error" in data:
-            error_msg = data.get("error", "Unknown error")
-            if "timeout" in error_msg.lower():
-                return f"{name}: ⏳ Timeout"
-            elif "connection" in error_msg.lower():
-                return f"{name}: 🔌 Connection Issue"
-            elif "401" in error_msg or "unauthorized" in error_msg.lower():
-                return f"{name}: 🔑 Invalid API Key"
-            elif "403" in error_msg or "forbidden" in error_msg.lower():
-                return f"{name}: 🚫 Access Denied"
-            else:
-                return f"{name}: ⚠️ Check Settings"
-        total = data.get("total", 0)
-        return f"{name}: ${total:.2f}"
-    
-    def _show_error_notification(self, message: str):
-        """Show a notification for errors."""
-        try:
-            subprocess.run([
-                "osascript", "-e",
-                f'display notification "{message}" with title "AI Spend Tracker"'
-            ], capture_output=True)
-        except Exception:
-            pass
     
     @rumps.clicked("Refresh Now")
     def refresh(self, _):
         """Manually refresh spend data."""
         self.update_spend()
-    
-    @rumps.clicked("Setup Instructions")
-    def show_setup_instructions(self, _):
-        """Show setup instructions dialog."""
-        instructions = """📋 SETUP INSTRUCTIONS
-
-To track your AI spending, you need to add API keys:
-
-1️⃣  OPENAI
-   Get key at: https://platform.openai.com/api-keys
-
-2️⃣  ANTHROPIC  
-   Get key at: https://console.anthropic.com/settings/keys
-
-3️⃣  OPENROUTER
-   Get key at: https://openrouter.ai/settings
-
-4️⃣  PERPLEXITY
-   Get key at: https://perplexity.ai/settings
-
-5️⃣  GEMINI
-   Get key at: https://aistudio.google.com/app/apikey
-
-💡 TIP: You don't need all five - just add the ones you use!
-
-After adding keys via Settings, click "Refresh Now" to update."""
-        
-        subprocess.run([
-            "osascript", "-e",
-            f'display dialog "{instructions}" with title "Setup Instructions" with icon note buttons {{"OK", "Settings"}} default button "OK"'
-        ], capture_output=True)
     
     @rumps.clicked("⚙️ Settings...")
     def open_settings(self, _):
@@ -576,18 +396,22 @@ After adding keys via Settings, click "Refresh Now" to update."""
         settings_window = SettingsWindow(current_keys)
         new_keys = settings_window.show()
         
-        if new_keys:
-            # Keys were saved - set environment variables and refresh
-            set_env_from_keys(new_keys)
-            self.keys_configured = True
-            self.update_spend()
-            self.start_auto_refresh()
-        else:
-            # Check if there are existing keys and set them as env vars
-            existing_keys = get_all_api_keys()
-            if existing_keys:
-                set_env_from_keys(existing_keys)
+        if new_keys is not None:
+            # Keys were saved or cleared - set environment variables
+            if new_keys:
+                set_env_from_keys(new_keys)
                 self.keys_configured = True
+            else:
+                # Keys were cleared
+                self.keys_configured = False
+                # Clear env var
+                os.environ.pop("OPENAI_API_KEY", None)
+            
+            # Rebuild menu with new state
+            self._build_menu()
+            
+            # Refresh data if we have keys
+            if self.keys_configured:
                 self.update_spend()
                 self.start_auto_refresh()
     
@@ -596,9 +420,9 @@ After adding keys via Settings, click "Refresh Now" to update."""
         """Show about dialog."""
         about_text = f"""AI Spend Tracker v{APP_VERSION}
 
-Track your AI API spending across OpenAI, Anthropic, OpenRouter, Perplexity, and Gemini.
+Track your OpenAI API spending.
 
-🔐 SECURITY: Your API keys are stored securely in macOS Keychain.
+🔐 SECURITY: Your API key is stored securely in macOS Keychain.
 
 ⏱️ Auto-refreshes every 5 minutes."""
         
@@ -609,6 +433,10 @@ Track your AI API spending across OpenAI, Anthropic, OpenRouter, Perplexity, and
     
     def start_auto_refresh(self):
         """Start background thread for auto-refresh."""
+        # Stop existing timer if any
+        if hasattr(self, 'refresh_timer') and self.refresh_timer:
+            self.refresh_timer.cancel()
+        
         def run():
             import time
             while True:
@@ -617,10 +445,6 @@ Track your AI API spending across OpenAI, Anthropic, OpenRouter, Perplexity, and
         
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
-    
-    def update(self):
-        """Alias for update_spend for auto-refresh callback."""
-        self.update_spend()
 
 
 def check_api_keys():
@@ -628,7 +452,7 @@ def check_api_keys():
     keys = get_all_api_keys()
     if not keys:
         print("No API keys configured.")
-        print("Run the app and click 'Settings...' to add your API keys.")
+        print("Run the app and click 'Settings...' to add your API key.")
         return False
     return True
 
