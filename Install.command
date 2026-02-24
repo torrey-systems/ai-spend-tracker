@@ -36,17 +36,32 @@ echo -e "${GREEN}✓${NC} Found Python $PYTHON_VERSION"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Install dependencies
+# Create virtual environment if needed
+VENV_DIR="$SCRIPT_DIR/venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo ""
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+    echo -e "${GREEN}✓${NC} Virtual environment created"
+fi
+
+# Activate virtual environment
+source "$VENV_DIR/bin/activate"
+
+# Upgrade pip
 echo ""
 echo "Installing dependencies..."
-python3 -m pip install --quiet requests pyyaml rumps 2>/dev/null || python3 -m pip install requests pyyaml rumps
+pip install --upgrade pip --quiet
+
+# Install the app dependencies
+pip install requests pyyaml rumps --quiet
 
 # Check if installation succeeded
-if python3 -c "import rumps" 2>/dev/null; then
+if python -c "import rumps" 2>/dev/null; then
     echo -e "${GREEN}✓${NC} Dependencies installed successfully"
 else
     echo -e "${RED}Error: Failed to install dependencies${NC}"
-    echo "Please try running: pip3 install requests pyyaml rumps"
+    echo "Please try manually: python3 -m venv venv && source venv/bin/activate && pip install requests pyyaml rumps"
     echo ""
     echo "Press Enter to exit..."
     read
@@ -81,13 +96,15 @@ else
     echo -e "${GREEN}✓${NC} Config file already exists"
 fi
 
-# Create the launcher script
+# Create the launcher script that uses the venv
 LAUNCHER_SCRIPT="$SCRIPT_DIR/run_tracker.command"
-cat > "$LAUNCHER_SCRIPT" << 'EOF'
+cat > "$LAUNCHER_SCRIPT" << 'LAUNCHER_EOF'
 #!/bin/bash
-cd "$(dirname "$0")"
-python3 menu_bar.py
-EOF
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+source "$SCRIPT_DIR/venv/bin/activate"
+python menu_bar.py
+LAUNCHER_EOF
 
 chmod +x "$LAUNCHER_SCRIPT"
 
@@ -102,5 +119,5 @@ echo ""
 # Small delay before launching
 sleep 1
 
-# Launch the app
-python3 menu_bar.py &
+# Launch the app using the virtual environment
+python menu_bar.py &
