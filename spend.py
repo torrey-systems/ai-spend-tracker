@@ -108,14 +108,14 @@ def get_openrouter_spend(api_key: str, days: int = 30) -> Optional[Dict]:
     }
     
     # OpenRouter provides user-level usage
-    url = "https://openrouter.ai/api/v1/usage"
+    url = "https://openrouter.ai/api/v1/credits"
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         
-        total_spend = data.get("total_cost", 0)
+        total_spend = data.get("data", {}).get("total_usage", 0)
         
         return {
             "provider": "OpenRouter",
