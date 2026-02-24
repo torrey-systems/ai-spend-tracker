@@ -316,18 +316,19 @@ class AISpendTracker(rumps.App):
         # Get current keys to determine what to show
         keys = get_all_api_keys()
         
-        self.menu = [
+        # Build menu as a list
+        menu_items = [
             rumps.MenuItem("Refresh Now", callback=self.refresh),
             None,
         ]
         
         # Only show OpenAI if configured
         if keys.get("openai"):
-            self.menu.append(rumps.MenuItem("OpenAI: --", callback=None))
+            menu_items.append(rumps.MenuItem("OpenAI: --", callback=None))
         else:
-            self.menu.append(rumps.MenuItem("OpenAI: Not configured", callback=None))
+            menu_items.append(rumps.MenuItem("OpenAI: Not configured", callback=None))
         
-        self.menu.extend([
+        menu_items.extend([
             None,
             rumps.MenuItem("Last updated: --", callback=None),
             None,
@@ -337,6 +338,9 @@ class AISpendTracker(rumps.App):
             None,
             rumps.MenuItem("Quit", callback=lambda _: self.terminate())
         ])
+        
+        # Set the menu
+        self.menu = menu_items
     
     def update_spend(self):
         """Fetch and display current spend from all providers."""

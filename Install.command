@@ -54,7 +54,7 @@ echo "Installing dependencies..."
 pip install --upgrade pip --quiet
 
 # Install the app dependencies
-pip install requests pyyaml rumps --quiet
+pip install requests pyyaml rumps keyring --quiet
 
 # Check if installation succeeded
 if python -c "import rumps" 2>/dev/null; then
