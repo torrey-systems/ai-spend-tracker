@@ -55,6 +55,7 @@ pip install --upgrade pip --quiet
 
 # Install the app dependencies
 pip install requests pyyaml rumps keyring --quiet
+pip install keyrings.alt --quiet 2>/dev/null || true
 
 # Check if installation succeeded
 if python -c "import rumps" 2>/dev/null; then
