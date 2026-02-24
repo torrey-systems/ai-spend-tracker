@@ -7,7 +7,7 @@ name = "ai-spend-tracker"
 version = "1.0.0"
 description = "Track AI API spending across OpenAI, Anthropic, OpenRouter, and Cursor from your macOS menu bar"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Your Name", email = "your.email@example.com"}
 ]
@@ -15,7 +15,6 @@ keywords = ["ai", "openai", "anthropic", "spend", "tracker", "menu-bar", "macos"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -29,13 +28,15 @@ requires-python = ">=3.8"
 dependencies = [
     "requests>=2.28.0",
     "pyyaml>=6.0",
-    "rumps>=0.4.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+]
+macos = [
+    "rumps>=0.4.0",
 ]
 
 [project.scripts]
@@ -48,7 +49,7 @@ Repository = "https://github.com/yourusername/ai-spend-tracker"
 Issues = "https://github.com/yourusername/ai-spend-tracker/issues"
 
 [tool.setuptools]
-packages = ["spend", "config", "errors"]
+py-modules = ["spend", "config", "errors", "menu_bar"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json", "*.yaml", "*.yml"]
