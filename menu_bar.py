@@ -230,55 +230,47 @@ class SettingsWindow:
         return None
     
     def _show_osascript_dialog(self) -> Optional[Dict[str, str]]:
-        """Show settings dialog using osascript."""
-        current_openai = self.current_keys.get("openai", "")
-        current_anthropic = self.current_keys.get("anthropic", "")
-        current_openrouter = self.current_keys.get("openrouter", "")
+        """Show settings dialog - user friendly sequential dialogs."""
+        new_keys = {}
         
-        # Use multiple input fields via osascript
-        script = f'''
-set dialogText to "Enter your API keys:\n\nLeave blank to keep existing value."
-set AppleScript's text item delimiters to "|"
-try
-    set input to display dialog dialogText default answer "{current_openai}|{current_anthropic}|{current_openrouter}" with title "AI Spend Tracker Settings" with icon note buttons {{"Cancel", "Save"}} default button "Save"
-    set buttonReturned to button returned of input
-    if buttonReturned is "Save" then
-        set textReturned to text returned of input
-        set AppleScript's text item delimiters to "|"
-        set keyList to every text item of textReturned
-        set openaiKey to item 1 of keyList
-        set anthropicKey to item 2 of keyList
-        set openrouterKey to item 3 of keyList
-        return openaiKey & "|" & anthropicKey & "|" & openrouterKey
-    end if
-on error
-    return ""
-end try
+        # Helper to show dialog for a single key
+        def ask_key(provider, name, url, current):
+            prompt = f"Enter your {name} API key:\n\nGet it at: {url}\n\nLeave empty to remove."
+            script = f'''
+set userInput to display dialog "{prompt}" default answer "{current}" with title "AI Spend Tracker - {name}" with icon note buttons {{"Skip", "Save"}} default button "Save"
+set buttonReturned to button returned of userInput
+if buttonReturned is "Save" then
+    return text returned of userInput
+else
+    return "SKIP"
+end if
 '''
-        
-        result = subprocess.run(["osascript", "-e", script], 
-                               capture_output=True, text=True)
-        
-        if result.returncode != 0 or not result.stdout.strip():
+            result = subprocess.run(["osascript", "-e", script], 
+                                   capture_output=True, text=True)
+            if result.returncode == 0:
+                val = result.stdout.strip()
+                if val and val != "SKIP":
+                    return val
             return None
         
-        # Parse the response
-        keys = result.stdout.strip().split("|")
+        # Ask for each provider one at a time
+        openai_key = ask_key("openai", "OpenAI", "https://platform.openai.com/api-keys", 
+                            self.current_keys.get("openai", ""))
+        if openai_key:
+            new_keys["openai"] = openai_key
+            save_key_to_keyring("openai_api_key", openai_key)
         
-        new_keys = {}
-        if len(keys) >= 1 and keys[0].strip():
-            save_key_to_keyring("openai_api_key", keys[0].strip())
-            new_keys["openai"] = keys[0].strip()
-        else:
-            delete_key_from_keyring("openai_api_key")
-            
-        if len(keys) >= 2 and keys[1].strip():
-            save_key_to_keyring("anthropic_api_key", keys[1].strip())
-            new_keys["anthropic"] = keys[1].strip()
-            
-        if len(keys) >= 3 and keys[2].strip():
-            save_key_to_keyring("openrouter_api_key", keys[2].strip())
-            new_keys["openrouter"] = keys[2].strip()
+        anthropic_key = ask_key("anthropic", "Anthropic", "https://console.anthropic.com/settings/keys",
+                               self.current_keys.get("anthropic", ""))
+        if anthropic_key:
+            new_keys["anthropic"] = anthropic_key
+            save_key_to_keyring("anthropic_api_key", anthropic_key)
+        
+        openrouter_key = ask_key("openrouter", "OpenRouter", "https://openrouter.ai/settings",
+                                self.current_keys.get("openrouter", ""))
+        if openrouter_key:
+            new_keys["openrouter"] = openrouter_key
+            save_key_to_keyring("openrouter_api_key", openrouter_key)
         
         return new_keys if new_keys else None
 
