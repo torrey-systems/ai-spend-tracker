@@ -81,19 +81,26 @@ def delete_key_from_keyring(key_name: str) -> None:
 
 
 def get_all_api_keys() -> Dict[str, str]:
-    """Get all API keys from keychain only (simplified)."""
+    """Get all API keys from keychain and env vars."""
     keys = {}
     
-    # Only check OpenAI keychain for now (simplified)
-    keyring_name = "openai_api_key"
-    keychain_value = get_key_from_keyring(keyring_name)
-    if keychain_value:
-        keys["openai"] = keychain_value
+    # Check keychain for each provider
+    providers = [
+        ("openai", "openai_api_key"),
+        ("anthropic", "anthropic_api_key"), 
+        ("openrouter", "openrouter_api_key"),
+    ]
     
-    # Also check environment variables as fallback
-    env_value = os.getenv("OPENAI_API_KEY")
-    if env_value and not keys.get("openai"):
-        keys["openai"] = env_value
+    for provider, keyring_name in providers:
+        # First try keychain
+        keychain_value = get_key_from_keyring(keyring_name)
+        if keychain_value:
+            keys[provider] = keychain_value
+        # Then try env var
+        env_var = f"{provider.upper()}_API_KEY"
+        env_value = os.getenv(env_var)
+        if env_value and not keys.get(provider):
+            keys[provider] = env_value
     
     return keys
 
@@ -313,10 +320,13 @@ class AISpendTracker(rumps.App):
         # Build the menu
         self._build_menu()
         
-        # Initial data fetch
+        # Initial data fetch (async)
         if self.keys_configured:
-            self.update_spend()
-            self.start_auto_refresh()
+            def initial_load():
+                import time
+                time.sleep(0.5)
+                self.update_spend()
+            threading.Thread(target=initial_load, daemon=True).start()
     
     def _build_menu(self):
         """Build the dropdown menu."""
@@ -377,8 +387,13 @@ class AISpendTracker(rumps.App):
     
     @rumps.clicked("Refresh Now")
     def refresh(self, _):
-        """Manually refresh spend data."""
-        self.update_spend()
+        """Manually refresh spend data (async to avoid UI lock)."""
+        def fetch_and_update():
+            import time
+            time.sleep(0.1)  # Small delay to let menu close
+            self.update_spend()
+        
+        threading.Thread(target=fetch_and_update, daemon=True).start()
     
     @rumps.clicked("⚙️ Settings...")
     def open_settings(self, _):
@@ -396,16 +411,18 @@ class AISpendTracker(rumps.App):
             else:
                 # Keys were cleared
                 self.keys_configured = False
-                # Clear env var
-                os.environ.pop("OPENAI_API_KEY", None)
             
             # Rebuild menu with new state
             self._build_menu()
             
-            # Refresh data if we have keys
+            # Refresh data if we have keys (async)
             if self.keys_configured:
-                self.update_spend()
-                self.start_auto_refresh()
+                def do_refresh():
+                    import time
+                    time.sleep(0.3)
+                    self.update_spend()
+                    self.start_auto_refresh()
+                threading.Thread(target=do_refresh, daemon=True).start()
     
     @rumps.clicked("About")
     def show_about(self, _):
