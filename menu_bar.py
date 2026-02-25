@@ -105,8 +105,16 @@ def check_api_keys_configured() -> bool:
 
 def set_env_from_keys(keys: Dict[str, str]) -> None:
     """Set environment variables from keys for spend.py to use."""
+    # Clear existing
+    for var in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY"]:
+        os.environ.pop(var, None)
+    # Set new keys
     if keys.get("openai"):
         os.environ["OPENAI_API_KEY"] = keys["openai"]
+    if keys.get("anthropic"):
+        os.environ["ANTHROPIC_API_KEY"] = keys["anthropic"]
+    if keys.get("openrouter"):
+        os.environ["OPENROUTER_API_KEY"] = keys["openrouter"]
 
 
 class SettingsWindow:
@@ -355,42 +363,16 @@ class AISpendTracker(rumps.App):
             
             total = results.get("_total", 0)
             
-            # Only show spend if we have data
+            # Update title - show total or error
             if total and total > 0:
                 self.title = f"AI: ${total:.2f}"
+            elif "error" in str(results.get("openai", {})).lower():
+                self.title = "AI: 🔑"  # Auth error
             else:
                 self.title = "AI: $0.00"
-            
-            # Update menu items
-            for item in self.menu:
-                if hasattr(item, 'title') and item.title and item.title.startswith("OpenAI:"):
-                    if "error" in results.get("openai", {}):
-                        error_msg = results["openai"].get("error", "")
-                        if "401" in error_msg or "unauthorized" in error_msg.lower():
-                            item.title = "OpenAI: 🔑 Invalid key"
-                        else:
-                            item.title = "OpenAI: ⚠️ Error"
-                    else:
-                        openai_total = results.get("openai", {}).get("total", 0)
-                        item.title = f"OpenAI: ${openai_total:.2f}"
-                    break
-            
-            # Update timestamp
-            for item in self.menu:
-                if hasattr(item, 'title') and item.title and item.title.startswith("Last updated:"):
-                    now = datetime.now().strftime("%H:%M:%S")
-                    item.title = f"Last updated: {now}"
-                    break
                     
         except Exception as e:
-            error_str = str(e).lower()
-            if "connection" in error_str or "timeout" in error_str:
-                self.title = "AI: ⚠️"
-            elif "unauthorized" in error_str or "401" in error_str or "api key" in error_str:
-                self.title = "AI: 🔑"
-            else:
-                self.title = "AI: ⚠️"
-            
+            self.title = "AI: ⚠️"
             print(f"Error updating spend: {e}")
     
     @rumps.clicked("Refresh Now")
