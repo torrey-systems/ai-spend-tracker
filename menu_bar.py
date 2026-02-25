@@ -380,8 +380,61 @@ class AISpendTracker(rumps.App):
                 self.title = "AI: 🔑"  # Auth error
             else:
                 self.title = "AI: $0.00"
+            
+            # Update menu items (need to run on main thread)
+            self._update_menu_items(results)
                     
         except Exception as e:
+            self.title = "AI: ⚠️"
+            print(f"Error updating spend: {e}")
+    
+    def _update_menu_items(self, results):
+        """Update menu items with spend data."""
+        try:
+            # Use rumps.do to update menu on main thread
+            def do_update():
+                try:
+                    # Get current menu items
+                    menu_dict = {}
+                    for item in self.menu:
+                        if hasattr(item, 'title') and item.title:
+                            for provider in ["OpenAI", "Anthropic", "OpenRouter"]:
+                                if item.title.startswith(provider + ":"):
+                                    menu_dict[provider] = item
+                                    break
+                    
+                    # Update each provider
+                    providers_map = {
+                        "OpenAI": "openai",
+                        "Anthropic": "anthropic", 
+                        "OpenRouter": "openrouter",
+                    }
+                    
+                    now = datetime.now().strftime("%H:%M")
+                    
+                    for menu_name, api_name in providers_map.items():
+                        if menu_name in menu_dict:
+                            item = menu_dict[menu_name]
+                            data = results.get(api_name, {})
+                            if "error" in data:
+                                item.title = f"{menu_name}: ⚠️ Error"
+                            else:
+                                amt = data.get("total", 0)
+                                item.title = f"{menu_name}: ${amt:.2f}"
+                    
+                    # Update timestamp
+                    for item in self.menu:
+                        if hasattr(item, 'title') and item.title and item.title.startswith("Last updated:"):
+                            item.title = f"Last updated: {now}"
+                            break
+                            
+                except Exception as e:
+                    print(f"Menu update error: {e}")
+            
+            rumps.do(do_update)
+            
+        except Exception as e:
+            print(f"Error in _update_menu_items: {e}")
             self.title = "AI: ⚠️"
             print(f"Error updating spend: {e}")
     
