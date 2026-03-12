@@ -74,3 +74,11 @@ python spend.py
 # Or run menu bar app (macOS)
 python menu_bar.py
 ```
+
+## Cursor Cloud specific instructions
+
+- **Linux-only environment**: `menu_bar.py` requires `rumps` (macOS-only). The CLI (`python spend.py`) is the testable entry point on Linux.
+- **`pyproject.toml` includes `rumps` in core deps**, so `pip install -e .` will fail on Linux. Install deps individually instead: `pip install requests pyyaml pytest pytest-cov`.
+- **Tests**: Run `pytest tests/test_config.py -v`. Note that `tests/test_spend.py` contains null bytes (corrupted) and will cause a collection error if the whole `tests/` directory is collected — target `test_config.py` directly.
+- **No linter configured**: The project has no flake8/ruff/mypy/pylint in its dependencies or config.
+- **No API keys required to run**: Without provider API keys the CLI still runs and outputs `$0.00` for all providers. Set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc. as env vars to fetch real spend data.
